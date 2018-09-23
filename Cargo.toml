@@ -2,6 +2,8 @@
 name = "pollock"
 version = "0.1.0"
 authors = ["Jef <jackefransham@gmail.com>"]
+license = "Unlicense"
+description = "Placeholder for Rust processing-like generative art library"
 
 [dependencies]
 piston = "0.37.0"
