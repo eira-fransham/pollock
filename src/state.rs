@@ -1,7 +1,22 @@
-pub struct DrawState<'a> {
-    context: Context,
-    gl: &'a mut GlGraphics,
-}
+use fnv::FnvHashMap as HashMap;
+use gfx::traits::FactoryExt;
+use gfx::Device;
+use gfx_window_glutin as gfx_glutin;
+use glutin::Api::OpenGl;
+use glutin::{GlContext, GlRequest};
+use nalgebra::Vector2;
+use palette::{Srgb, Srgba};
+use rand::distributions::uniform::SampleUniform;
+use rand::distributions::{Distribution, Standard};
+use rand::prng::XorShiftRng;
+use rand::{FromEntropy, Rng};
+use serde::{Deserialize, Serialize};
+use serde_json;
+use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
+use std::path::Path;
+use std::{fs, io};
+use {Color, V2, v2};
 
 #[derive(Serialize, Deserialize)]
 pub struct Stroke {
@@ -72,21 +87,22 @@ pub struct PollockState<State> {
     pub background: Color,
     pub frame_count: usize,
     random: XorShiftRng,
-    size: (u32, u32),
-    size_dirty: bool,
+    size: (f64, f64),
+    // TODO: Avoid pub(crate) here
+    pub(crate) size_dirty: bool,
 }
 
 impl<S> PollockState<S> {
-    pub fn size(&mut self, w: u32, h: u32) {
-        self.size = (w, h);
+    pub fn size<W: Into<f64>, H: Into<f64>>(&mut self, w: W, h: H) {
+        self.size = (w.into(), h.into());
         self.size_dirty = true;
     }
 
-    pub fn width(&self) -> u32 {
+    pub fn width(&self) -> f64 {
         self.size.0
     }
 
-    pub fn height(&self) -> u32 {
+    pub fn height(&self) -> f64 {
         self.size.0
     }
 
@@ -101,14 +117,14 @@ impl<S> PollockState<S> {
         self.random.gen()
     }
 
-    fn extend<I>(&mut self, inner: I) -> ExtendedState<S, I> {
+    pub fn extend<I>(&mut self, inner: I) -> ExtendedState<S, I> {
         ExtendedState {
             state: self,
             inner: RefCell::new(inner),
         }
     }
 
-    fn with_state<State>(self, state: State) -> PollockState<State> {
+    pub fn with_state<State>(self, state: State) -> PollockState<State> {
         PollockState {
             state,
             stroke: self.stroke,
@@ -123,7 +139,7 @@ impl<S> PollockState<S> {
         }
     }
 
-    fn new(state: S) -> Self {
+    pub fn new(state: S) -> Self {
         PollockState {
             state,
             stroke: Default::default(),
@@ -133,7 +149,7 @@ impl<S> PollockState<S> {
             random: <_>::from_entropy(),
             background: Color::new(0, 0, 0, 0),
             frame_count: 0,
-            size: (640, 480),
+            size: (640., 480.),
             size_dirty: true,
         }
     }
@@ -177,4 +193,3 @@ impl<'a, S, I> DerefMut for ExtendedState<'a, S, I> {
         self.state
     }
 }
-
