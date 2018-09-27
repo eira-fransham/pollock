@@ -2,7 +2,7 @@
 
 ## A framework for bad code
 
-Pollock is an idiomatic-enough reimplementation of Processing's ideals and API in Rust, for use to make generative art, small games in game jams, or just as a toy to play with. It tries to put as few restrictions on your code as possible, so writing using it feels as comfortable as writing code in a dynamic language but with less bugs and better performance. Having said that, right now performance in debug mode is pretty terrible because I make heavy use of zero-cost abstractions which heavily rely on optimisations. Performance in release mode is already fantastic, though, and probably can be improved further. One limitation is that I definitely always want to have an immediate-mode interface, although I would love to work out a way to at least partly use retained mode in the backend.
+Pollock is an idiomatic-enough reimplementation of Processing's ideals and API in Rust, for use to make generative art, small games in game jams, or just as a toy to play with. It tries to put as few restrictions on your code as possible, so writing using it feels as comfortable as writing code in a dynamic language but with less bugs and better performance. Having said that, right now performance in debug mode is pretty terrible because I make heavy use of zero-cost abstractions which heavily rely on optimisations. Performance in release mode is already fantastic, though, and probably can be improved further. One limitation is that I definitely always want to have an immediate-mode interface, although I would love to work out a way to at least partly use retained mode in the backend. I already batch up all calls into a single draw call.
 
 It's still pre-pre-pre-alpha, but it already has some cool features like saving videos and an emulator-style savestate system which can be used to give a workflow similar to hot reloading - making a change, rerunning the program and reloading the state to get back to where you were.
 
@@ -14,7 +14,7 @@ It's still pre-pre-pre-alpha, but it already has some cool features like saving 
 
 Pollock is designed to allow quick hacking on code that you don't intend to ever maintain. It's for experiments and mistakes.
 
-If you've used Processing before the API will look familiar. If you've used some big Rust game frameworks the API will probably look totally alien. For a start, you don't define a trait. I chose to use the builder pattern to avoid the problem of having to annotate types everywhere, and to mean that you need to understand less of Rust to be able to write something, even if it's only something simple, in Rust.
+If you've used Processing before the API will look familiar. If you've used some popular Rust game frameworks the API will probably look totally alien. For a start, you don't define a trait. I chose to use the builder pattern to avoid the problem of having to annotate types everywhere, and to mean that you need to understand less of Rust to be able to write something, even if it's only something simple, in Rust.
 
 ```rust
 extern crate pollock;
