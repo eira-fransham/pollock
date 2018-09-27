@@ -1,3 +1,5 @@
+use alga::linear::Transformation;
+use nalgebra::Point;
 use state::{DrawParams, ExtendedState, Fill, Scale, StateWithModifications, Stroke};
 use std::iter::{self, ExactSizeIterator};
 use {v2, Color, ColorFormat, V2};
@@ -75,6 +77,7 @@ pub struct DrawState {
     pub(crate) indices: Vec<u32>,
 }
 
+// TODO: Do transformation in shader instead?
 impl DrawState {
     pub(crate) fn new(vertices: Vec<Vertex>, indices: Vec<u32>) -> Self {
         DrawState { vertices, indices }
@@ -82,7 +85,7 @@ impl DrawState {
 
     /// Draw any convex polygon without lines
     #[inline]
-    fn convex_poly<I>(&mut self, stroke: Stroke, fill: Fill, verts: I)
+    fn convex_poly<I>(&mut self, transformation: &::Transform, stroke: Stroke, fill: Fill, verts: I)
     where
         I: Iterator<Item = V2WithNorm> + ExactSizeIterator,
     {
@@ -103,8 +106,11 @@ impl DrawState {
         let len = verts.len();
         self.vertices.extend(verts.map(|v| {
             let norm = v.norm * half_t;
+            let norm = transformation.transform_vector(&norm);
+            let pos = transformation.transform_point(&Point::from_coordinates(v.pos));
+
             Vertex {
-                pos: [v.pos.x as f32, v.pos.y as f32, 0., 1.0],
+                pos: [pos.x as f32, pos.y as f32, 0., 1.0],
                 color: fill_color,
                 normal: [norm.x as f32, norm.y as f32],
             }
@@ -117,8 +123,13 @@ impl DrawState {
     }
 
     #[inline]
-    fn lines<I>(&mut self, stroke: Stroke, verts: I, connect_back: bool)
-    where
+    fn lines<I>(
+        &mut self,
+        transformation: &::Transform,
+        stroke: Stroke,
+        verts: I,
+        connect_back: bool,
+    ) where
         I: Iterator<Item = V2WithNorm>,
     {
         use itertools::Itertools;
@@ -138,12 +149,15 @@ impl DrawState {
 
         self.vertices.extend(verts.flat_map(|v| {
             let norm = v.norm * half_t;
+            let norm = transformation.transform_vector(&norm);
+            let pos = transformation.transform_point(&Point::from_coordinates(v.pos));
+
             iter::once(Vertex {
-                pos: [v.pos.x as f32, v.pos.y as f32, 0., 1.0],
+                pos: [pos.x as f32, pos.y as f32, 0., 1.0],
                 color: stroke_color,
                 normal: [norm.x as f32, norm.y as f32],
             }).chain(iter::once(Vertex {
-                pos: [v.pos.x as f32, v.pos.y as f32, 0., 1.0],
+                pos: [pos.x as f32, pos.y as f32, 0., 1.0],
                 color: stroke_color,
                 normal: [-norm.x as f32, -norm.y as f32],
             }))
@@ -217,8 +231,8 @@ where
         I: Iterator<Item = V2WithNorm> + ExactSizeIterator + Clone,
     {
         let mut inner = self.inner.borrow_mut();
-        inner.convex_poly(self.stroke(), self.fill(), verts.clone());
-        inner.lines(self.stroke(), verts, true);
+        inner.convex_poly(self.transform(), self.stroke(), self.fill(), verts.clone());
+        inner.lines(self.transform(), self.stroke(), verts, true);
     }
 
     pub fn set(&self, _pos: V2, _color: Color) {
@@ -276,6 +290,7 @@ where
         let diff = b - a;
         let norm = v2(-diff.x, diff.y);
         self.inner.borrow_mut().lines(
+            self.transform(),
             self.stroke(),
             fixed_size_iter![V2WithNorm { pos: a, norm }, V2WithNorm { pos: b, norm }],
             false,
@@ -288,6 +303,7 @@ where
         // TODO: Use simple joins (avoid calculating properly) when stroke thickness is
         //       small.
         self.inner.borrow_mut().lines(
+            self.transform(),
             self.stroke(),
             iter::once(None)
                 .chain(verts.into_iter().map(Some))
@@ -335,6 +351,7 @@ where
         // TODO: Use simple joins (avoid calculating properly) when stroke thickness is
         //       small.
         self.inner.borrow_mut().lines(
+            self.transform(),
             self.stroke(),
             first
                 .into_iter()
@@ -361,18 +378,21 @@ where
     // We don't use `Into<f64>` here because that encourages people accidentally supplying degrees
     // Obviously they'll realise pretty quick but there's no reason to ever supply radians as a
     // type other than f64.
-    pub fn with_rotate(&self, radians: f64) -> ExtendedState<StateWithModifications<S>, DrawState> {
+    pub fn with_rotation(
+        &self,
+        radians: f64,
+    ) -> ExtendedState<StateWithModifications<S>, DrawState> {
         let mut out = self.push();
-        out.transform *= ::Transform::new_rotation(radians);
+        out.rotate(radians);
         out
     }
 
-    pub fn with_translate(
+    pub fn with_translation(
         &self,
         translate: V2,
     ) -> ExtendedState<StateWithModifications<S>, DrawState> {
         let mut out = self.push();
-        out.transform *= ::Transform::new_translation(&translate);
+        out.translate(translate);
         out
     }
 
@@ -381,7 +401,7 @@ where
         scale: Scl,
     ) -> ExtendedState<StateWithModifications<S>, DrawState> {
         let mut out = self.push();
-        out.transform *= ::Transform::new_nonuniform_scaling(&scale.into_scale());
+        out.scale(scale);
         out
     }
 

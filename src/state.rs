@@ -159,7 +159,7 @@ impl Default for InternalState {
 pub trait DrawParams {
     fn stroke(&self) -> Stroke;
     fn fill(&self) -> Fill;
-    fn transform(&self) -> Transform;
+    fn transform(&self) -> &Transform;
 }
 
 pub struct StateWithModifications<'a, PState> {
@@ -193,7 +193,7 @@ where
     PState: DrawParams,
 {
     pub(crate) fn new(state: &'a PState) -> Self {
-        let (transform, stroke, fill) = (state.transform(), state.stroke(), state.fill());
+        let (transform, stroke, fill) = (state.transform().clone(), state.stroke(), state.fill());
         StateWithModifications {
             delegate_to: state,
             transform,
@@ -222,8 +222,8 @@ impl<'a, S> DrawParams for StateWithModifications<'a, S> {
     fn fill(&self) -> Fill {
         self.fill
     }
-    fn transform(&self) -> Transform {
-        self.transform
+    fn transform(&self) -> &Transform {
+        &self.transform
     }
 }
 
@@ -234,8 +234,8 @@ impl<S> DrawParams for PollockState<S> {
     fn fill(&self) -> Fill {
         self.fill
     }
-    fn transform(&self) -> Transform {
-        self.transform
+    fn transform(&self) -> &Transform {
+        &self.transform
     }
 }
 
@@ -249,7 +249,7 @@ where
     fn fill(&self) -> Fill {
         (**self).fill()
     }
-    fn transform(&self) -> Transform {
+    fn transform(&self) -> &Transform {
         (**self).transform()
     }
 }
@@ -264,7 +264,7 @@ where
     fn fill(&self) -> Fill {
         (**self).fill()
     }
-    fn transform(&self) -> Transform {
+    fn transform(&self) -> &Transform {
         (**self).transform()
     }
 }
@@ -404,7 +404,7 @@ impl<S> PollockState<S> {
 
     #[inline]
     pub fn height(&self) -> u32 {
-        self.size.0
+        self.size.1
     }
 
     #[inline]

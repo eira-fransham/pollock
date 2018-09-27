@@ -16,6 +16,7 @@ extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate tempfile;
+extern crate alga;
 
 use fnv::FnvHashMap as HashMap;
 use gfx::format::{Formatted, SurfaceTyped};
@@ -344,11 +345,14 @@ where
                 let (w, h) = (state.size.0 as f32, state.size.1 as f32);
 
                 //Identity Matrix
-                let scale = (2. / w).min(2. / h);
+                let largest_side = w.max(h);
+                let (move_x, move_y) = (w / largest_side, h / largest_side);
+                let scale = 2. / largest_side;
+
                 let transform = Transform {
                     transform: [
-                        [scale, 0.0, 0.0, -1.0],
-                        [0.0, scale, 0.0, -1.0],
+                        [scale, 0.0, 0.0, -move_x],
+                        [0.0, scale, 0.0, -move_y],
                         [0.0, 0.0, 1.0, 0.0],
                         [0.0, 0.0, 0.0, 1.0],
                     ],
