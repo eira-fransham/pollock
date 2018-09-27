@@ -110,7 +110,7 @@ fn main() {
             *pos += *vel * 1.;
         }
 
-        for (pos, _) in p.state.balls.iter().enumerate() {
+        for (pos, _) in p.state.balls.iter() {
             p.circle(*pos, radius);
         }
     })
