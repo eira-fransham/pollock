@@ -43,7 +43,7 @@ fn main() {
 
 `v2` creates a vector, I think that the rest is self-explanatory. I use the `Vector2` type from `nalgebra` for my vector type, although this might change in the future since the error messages when using this type are utterly indefensible. It does allow you to do really nice stuff out of the box that is really unwieldy in Processing. For example, you can just add and subtract vectors, multiply them by scalars and all other nice things that are useful in a context where you're working with 2D graphics. I don't currently expose many of `nalgebra`'s features but as I get more feedback on the design of the API I may add more.
 
-Additionally, I support creating lines from an iterator of points, and in fact everything that can work with iterators does work with iterators. This does mean that it's hard to do a line from a fixed array, but I already have a `fixed_size_iter` macro internally that I might expose (under a nicer name, of course).
+Something that I don't show off in this example or the example below is that I don't have an equivalent of `startShape` and `endShape`, everything's just done with iterators. You can build both polygons and lines (with joins done automatically) from an iterator over `V2`s (i.e. 2D vectors). This is very performant, arguably more ergonomic, and doesn't have the possibility of accidentally forgetting to call `endShape`.
 
 ### Handling mutable state
 
@@ -127,7 +127,7 @@ In case you're wondering, you can access `p.state` in `setup`, but it just has t
 
 ### How you can help
 
-Use it! Tell me where features are missing and whether it's actually as easy to use as I hope it is. I do worry that my heavy use of generics and `Deref` might make it a little difficult to read the documentation, but this can probably be helped with careful use of type aliases.
+Use it! Tell me where features are missing and whether it's actually as easy to use as I hope it is. I do worry that my heavy use of generics and `Deref` might make it a little difficult to read the documentation, but this can probably be helped with careful use of type aliases. I want to do some work to port Processing tutorials to Pollock to find out where common operations aren't supported.
 
 Here's an example gif from a Processing sketch that I ported to Pollock:
 
@@ -136,6 +136,7 @@ Here's an example gif from a Processing sketch that I ported to Pollock:
 Future features:
 
 - Images
+- Text
 - Sound input (from a file and/or from the microphone) for visualisations
 - Mouse input
 - Module system to add extra functionality to `PollockState` that looks like it was implemented in the core library. I have some ideas of how to use the type system to achieve this but I haven't put anything concrete down yet.
