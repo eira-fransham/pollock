@@ -363,6 +363,8 @@ where
         );
     }
 
+    #[inline]
+    #[must_use = "`.push` doesn't mutate the state like in Processing, in Pollock you must assign the result to a variable, like `let mut p = p.push()`. The stack will be popped automatically when this variable goes out of scope."]
     pub fn push(&self) -> ExtendedState<StateWithModifications<S>, DrawState> {
         ExtendedState {
             state: StateWithModifications::new(&self.state),
@@ -370,6 +372,7 @@ where
         }
     }
 
+    #[inline]
     // We don't use `Into<f64>` here because that encourages people accidentally supplying degrees
     // Obviously they'll realise pretty quick but there's no reason to ever supply radians as a
     // type other than f64.
@@ -382,6 +385,7 @@ where
         out
     }
 
+    #[inline]
     pub fn with_translation(
         &self,
         translate: V2,
@@ -391,6 +395,7 @@ where
         out
     }
 
+    #[inline]
     pub fn with_scale<Scl: Scale>(
         &self,
         scale: Scl,
@@ -400,6 +405,7 @@ where
         out
     }
 
+    #[inline]
     pub fn with_stroke(
         &self,
         stroke: Stroke,
@@ -409,6 +415,7 @@ where
         out
     }
 
+    #[inline]
     pub fn with_fill(&self, fill: Fill) -> ExtendedState<StateWithModifications<S>, DrawState> {
         let mut out = self.push();
         out.fill = fill;

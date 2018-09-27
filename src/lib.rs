@@ -1,7 +1,11 @@
 #![feature(nll)]
+#![feature(external_doc)]
+#![warn(missing_docs)]
+#![doc(include = "../README.md")]
 
 #[macro_use]
 extern crate gfx;
+extern crate alga;
 extern crate crossbeam;
 extern crate fnv;
 extern crate gfx_window_glutin;
@@ -9,14 +13,13 @@ extern crate gifski;
 extern crate glutin;
 extern crate image;
 extern crate itertools;
-extern crate nalgebra;
-extern crate palette;
+pub extern crate nalgebra;
+pub extern crate palette;
 extern crate rand;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
 extern crate tempfile;
-extern crate alga;
 
 use fnv::FnvHashMap as HashMap;
 use gfx::format::{Formatted, SurfaceTyped};
@@ -80,7 +83,6 @@ struct KeyHandler<'a, State> {
     up: Option<Box<FnMut(&mut PollockState<State>) + 'a>>,
 }
 
-// TODO: Use type parameters instead of Box<Fn>
 /// Entry point for `Pollock`. The entrypoint for making a new Pollock project is `setup()`.
 ///
 /// To create a new Pollock instance, you call `setup` with a setup function that will be
@@ -104,14 +106,20 @@ struct KeyHandler<'a, State> {
 /// ```
 ///
 /// To actually _do_ anything with Pollock, you need to add code to `draw`. Unlike Processing,
-/// which allows you to call draw functions at any time, Pollock only allows you to draw
-/// in the draw function itself. You can draw to the screen with `p.circle`, `p.rect` and so
-/// forth. For a full list of functions see the documentation for `ExtendedState`.
+/// which allows you to call functions that draw to the screen at any time, Pollock only allows
+/// you to draw in the draw function itself. You can draw to the screen with `p.circle`, `p.rect`
+/// and so forth. For a full list of functions see the documentation for `ExtendedState`.
 ///
 /// ```no_run
+/// let size = (600, 600);
 /// Pollock::setup(|p| {
-///     // Setup code
+///     p.size = size;
 /// }).draw(|p| {
+///     // Example spinning square
+///     let mut p = p.push();
+///     p.rotate(p.frame_count as f64 / 100.);
+///     p.translate(v2(size.0, size.1));
+///     p.square(v2(0, 0), 50);
 /// }).run();
 /// ```
 #[must_use = "Pollock does nothing until you call `.run()`"]
@@ -122,11 +130,13 @@ pub struct Pollock<'a, State, SetupFn, DrawFn> {
     frame_handlers: Vec<(usize, Box<FnMut(&mut PollockState<State>) + 'a>)>,
 }
 
-impl<'a, S, SFn> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)>
-where
-    SFn: FnOnce(&mut PollockState<()>) -> S,
-{
-    pub fn setup(fun: SFn) -> Self {
+impl<'a, S, SFn> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)> {
+    pub fn setup(
+        fun: SFn,
+    ) -> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)>
+    where
+        SFn: FnOnce(&mut PollockState<()>) -> S,
+    {
         Pollock {
             setup_fn: Some(fun),
             key_handlers: Default::default(),
@@ -352,7 +362,9 @@ where
                 let transform = Transform {
                     transform: [
                         [scale, 0.0, 0.0, -move_x],
-                        [0.0, scale, 0.0, -move_y],
+                        // We do `-scale` here so that our coordinate system starts from the top-left
+                        // instead of the bottom-left.
+                        [0.0, -scale, 0.0, move_y],
                         [0.0, 0.0, 1.0, 0.0],
                         [0.0, 0.0, 0.0, 1.0],
                     ],
