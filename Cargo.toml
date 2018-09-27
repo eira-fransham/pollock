@@ -1,6 +1,6 @@
 [package]
 name = "pollock"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Jef <jackefransham@gmail.com>"]
 license = "Unlicense"
 description = "Placeholder for Rust processing-like generative art library"
