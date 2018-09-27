@@ -21,7 +21,6 @@ pub mod shaders {
 
 in vec4 a_Pos;
 in vec4 a_Color;
-in vec2 a_Normal;
 
 uniform Transform {
     mat4 u_Transform;
@@ -31,8 +30,7 @@ out vec4 v_Color;
 
 void main() {
     v_Color = a_Color;
-    vec4 new_Pos = vec4(a_Pos.xy + a_Normal, a_Pos.zw);
-    gl_Position = new_Pos * u_Transform;
+    gl_Position = a_Pos * u_Transform;
 }
 "##;
 
@@ -53,7 +51,6 @@ gfx_defines!{
     vertex Vertex {
         pos: [f32; 4] = "a_Pos",
         color: [f32; 4] = "a_Color",
-        normal: [f32; 2] = "a_Normal",
     }
 
     constant Transform {
@@ -106,13 +103,11 @@ impl DrawState {
         let len = verts.len();
         self.vertices.extend(verts.map(|v| {
             let norm = v.norm * half_t;
-            let norm = transformation.transform_vector(&norm);
-            let pos = transformation.transform_point(&Point::from_coordinates(v.pos));
+            let pos = transformation.transform_point(&Point::from_coordinates(v.pos + norm));
 
             Vertex {
                 pos: [pos.x as f32, pos.y as f32, 0., 1.0],
                 color: fill_color,
-                normal: [norm.x as f32, norm.y as f32],
             }
         }));
         self.indices.extend(
@@ -149,17 +144,17 @@ impl DrawState {
 
         self.vertices.extend(verts.flat_map(|v| {
             let norm = v.norm * half_t;
-            let norm = transformation.transform_vector(&norm);
-            let pos = transformation.transform_point(&Point::from_coordinates(v.pos));
+            let (pos_a, pos_b) = (
+                transformation.transform_point(&Point::from_coordinates(v.pos + norm)),
+                transformation.transform_point(&Point::from_coordinates(v.pos - norm)),
+            );
 
             iter::once(Vertex {
-                pos: [pos.x as f32, pos.y as f32, 0., 1.0],
+                pos: [pos_a.x as f32, pos_a.y as f32, 0., 1.0],
                 color: stroke_color,
-                normal: [norm.x as f32, norm.y as f32],
             }).chain(iter::once(Vertex {
-                pos: [pos.x as f32, pos.y as f32, 0., 1.0],
+                pos: [pos_b.x as f32, pos_b.y as f32, 0., 1.0],
                 color: stroke_color,
-                normal: [-norm.x as f32, -norm.y as f32],
             }))
         }));
 
