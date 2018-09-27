@@ -1,3 +1,4 @@
+use fnv::FnvHashSet as HashSet;
 use rand::distributions::uniform::SampleUniform;
 use rand::distributions::{Distribution, Standard};
 use rand::prng::XorShiftRng;
@@ -7,7 +8,7 @@ use std::cell::RefCell;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use {serde_json, Color};
+use {serde_json, v2, Color, Key, Transform, V2};
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct Stroke {
@@ -73,29 +74,12 @@ impl Fill {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct PollockStateGeneric<Internal, State> {
+pub struct PollockState<State> {
     pub state: State,
-    pub(crate) internal: Internal,
+    pub(crate) internal: InternalState,
 }
 
-pub type PollockState<'a, State> = PollockStateGeneric<&'a mut InternalState, State>;
-pub type PollockStateOwned<State> = PollockStateGeneric<InternalState, State>;
-
-impl<'a, State> Deref for PollockState<'a, State> {
-    type Target = InternalState;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.internal
-    }
-}
-
-impl<'a, State> DerefMut for PollockState<'a, State> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.internal
-    }
-}
-
-impl<State> Deref for PollockStateOwned<State> {
+impl<S> Deref for PollockState<S> {
     type Target = InternalState;
 
     fn deref(&self) -> &Self::Target {
@@ -103,9 +87,30 @@ impl<State> Deref for PollockStateOwned<State> {
     }
 }
 
-impl<State> DerefMut for PollockStateOwned<State> {
+impl<S> DerefMut for PollockState<S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.internal
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct KeySet {
+    // We use `u16` instead of `Key` since `Key` doesn't implement
+    // `Serialize + Deserialize`
+    keys: HashSet<u16>,
+}
+
+impl KeySet {
+    pub fn is_down(&self, key: Key) -> bool {
+        self.keys.contains(&(key as u16))
+    }
+
+    pub(crate) fn press(&mut self, key: Key) {
+        self.keys.insert(key as u16);
+    }
+
+    pub(crate) fn release(&mut self, key: Key) {
+        self.keys.remove(&(key as u16));
     }
 }
 
@@ -117,7 +122,10 @@ pub struct InternalState {
     pub background: Color,
     pub frame_count: usize,
     pub size: (u32, u32),
+    pub keys: KeySet,
+    pub transform: Transform,
     pub(crate) save_frame: Option<PathBuf>,
+    pub(crate) record_folder: Option<PathBuf>,
     random: XorShiftRng,
     cached_size: (u32, u32),
 }
@@ -127,12 +135,15 @@ impl InternalState {
         let size = (640, 480);
         InternalState {
             save_frame: None,
+            record_folder: None,
             paused: false,
             stroke: Default::default(),
             fill: Default::default(),
             random: <_>::from_entropy(),
             background: Color::new(0, 0, 0, 0),
             frame_count: 0,
+            keys: Default::default(),
+            transform: Transform::identity(),
             size: size,
             cached_size: size,
         }
@@ -148,60 +159,83 @@ impl Default for InternalState {
 pub trait DrawParams {
     fn stroke(&self) -> Stroke;
     fn fill(&self) -> Fill;
+    fn transform(&self) -> Transform;
 }
 
-pub struct StateWithModifications<'a, S> {
-    delegate_to: &'a PollockState<'a, S>,
-    stroke: Option<Stroke>,
-    fill: Option<Fill>,
+pub struct StateWithModifications<'a, PState> {
+    delegate_to: &'a PState,
+    pub transform: Transform,
+    pub stroke: Stroke,
+    pub fill: Fill,
 }
 
-impl<'a, S> Clone for StateWithModifications<'a, S> {
+impl<'a, PState> Clone for StateWithModifications<'a, PState> {
     fn clone(&self) -> Self {
         StateWithModifications {
             delegate_to: self.delegate_to,
+            transform: self.transform,
             stroke: self.stroke,
             fill: self.fill,
         }
     }
 }
 
-impl<'a, S> StateWithModifications<'a, S> {
-    pub(crate) fn new(state: &'a PollockState<S>) -> Self {
-        StateWithModifications {
-            delegate_to: state,
-            stroke: None,
-            fill: None,
-        }
+impl<'a, S> Deref for StateWithModifications<'a, S> {
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        self.delegate_to
     }
 }
 
-impl<'a, PState> StateWithModifications<'a, PState> {
-    pub fn with_stroke(mut self, stroke: Stroke) -> Self {
-        self.stroke = Some(stroke);
-        self
+impl<'a, PState> StateWithModifications<'a, PState>
+where
+    PState: DrawParams,
+{
+    pub(crate) fn new(state: &'a PState) -> Self {
+        let (transform, stroke, fill) = (state.transform(), state.stroke(), state.fill());
+        StateWithModifications {
+            delegate_to: state,
+            transform,
+            stroke,
+            fill,
+        }
     }
-    pub fn with_fill(mut self, fill: Fill) -> Self {
-        self.fill = Some(fill);
-        self
+
+    pub fn rotate(&mut self, radians: f64) {
+        self.transform *= Transform::new_rotation(radians);
+    }
+
+    pub fn translate(&mut self, translate: V2) {
+        self.transform *= Transform::new_translation(&translate);
+    }
+
+    pub fn scale<Scl: Scale>(&mut self, scale: Scl) {
+        self.transform *= Transform::new_nonuniform_scaling(&scale.into_scale());
     }
 }
 
 impl<'a, S> DrawParams for StateWithModifications<'a, S> {
     fn stroke(&self) -> Stroke {
-        self.stroke.unwrap_or(self.delegate_to.stroke)
+        self.stroke
     }
     fn fill(&self) -> Fill {
-        self.fill.unwrap_or(self.delegate_to.fill)
+        self.fill
+    }
+    fn transform(&self) -> Transform {
+        self.transform
     }
 }
 
-impl<'a, S> DrawParams for PollockState<'a, S> {
+impl<S> DrawParams for PollockState<S> {
     fn stroke(&self) -> Stroke {
         self.stroke
     }
     fn fill(&self) -> Fill {
         self.fill
+    }
+    fn transform(&self) -> Transform {
+        self.transform
     }
 }
 
@@ -215,6 +249,9 @@ where
     fn fill(&self) -> Fill {
         (**self).fill()
     }
+    fn transform(&self) -> Transform {
+        (**self).transform()
+    }
 }
 
 impl<'a, T> DrawParams for &'a mut T
@@ -227,9 +264,28 @@ where
     fn fill(&self) -> Fill {
         (**self).fill()
     }
+    fn transform(&self) -> Transform {
+        (**self).transform()
+    }
 }
 
-impl<Internal, S> PollockStateGeneric<Internal, S> {
+pub trait Scale {
+    fn into_scale(self) -> V2;
+}
+
+impl Scale for V2 {
+    fn into_scale(self) -> V2 {
+        self
+    }
+}
+
+impl Scale for f64 {
+    fn into_scale(self) -> V2 {
+        v2(self, self)
+    }
+}
+
+impl<S> PollockState<S> {
     pub(crate) fn extend<'a, 'b, I>(
         &'b mut self,
         inner: &'a RefCell<I>,
@@ -238,27 +294,21 @@ impl<Internal, S> PollockStateGeneric<Internal, S> {
     }
 
     #[inline]
-    pub(crate) fn with_state<State>(self, state: State) -> PollockStateGeneric<Internal, State> {
-        PollockStateGeneric {
+    pub(crate) fn with_state<State>(self, state: State) -> PollockState<State> {
+        PollockState {
             state,
             internal: self.internal,
         }
     }
 
     #[inline]
-    pub(crate) fn new(state: S, internal: Internal) -> Self {
-        PollockStateGeneric {
+    pub(crate) fn new(state: S, internal: InternalState) -> Self {
+        PollockState {
             state,
             internal: internal,
         }
     }
-}
 
-// TODO: `push_transform`/`pop_transform`
-impl<I, S> PollockStateGeneric<I, S>
-where
-    Self: DerefMut<Target = InternalState>,
-{
     pub(crate) fn size_dirty(&self) -> bool {
         self.cached_size != self.size
     }
@@ -267,9 +317,84 @@ where
         self.cached_size = self.size;
     }
 
+    pub(crate) fn save_paths(&mut self) -> impl Iterator<Item = PathBuf> + '_ {
+        let count = self.frame_count;
+        self.save_frame
+            .take()
+            .into_iter()
+            .chain(self.record_folder.iter().map(move |dir| {
+                let mut dir = dir.to_owned();
+                dir.push(count.to_string());
+                dir
+            }))
+    }
+
+    pub fn rotate(&mut self, radians: f64) {
+        self.transform *= Transform::new_rotation(radians);
+    }
+
+    pub fn translate(&mut self, translate: V2) {
+        self.transform *= Transform::new_translation(&translate);
+    }
+
+    pub fn scale<Scl: Scale>(&mut self, scale: Scl) {
+        self.transform *= Transform::new_nonuniform_scaling(&scale.into_scale());
+    }
+
     #[inline]
     pub fn save_image<P: AsRef<Path>>(&mut self, filename: P) {
         self.save_frame = Some(filename.as_ref().into());
+    }
+
+    #[inline]
+    pub fn start_recording(&mut self) {
+        use tempfile::tempdir;
+
+        self.record_folder = Some(tempdir().unwrap().into_path());
+    }
+
+    /// This function does nothing if we are not recording
+    #[inline]
+    pub fn stop_recording<P: AsRef<Path>>(&mut self, filename: P) {
+        use crossbeam::thread;
+        use gifski;
+        use std::fs;
+
+        let filename = filename.as_ref().to_owned();
+        if let Some(folder) = self.record_folder.take() {
+            let out = fs::File::create(&filename).expect("Couldn't create gif output file");
+            let iterator = fs::read_dir(&folder).expect("Couldn't find temp recording folder");
+
+            let (mut collector, writer) = gifski::new(gifski::Settings {
+                width: None,
+                height: None,
+                quality: 30,
+                once: false,
+                fast: false,
+            }).unwrap();
+
+            let thread_folder = folder.clone();
+            thread::scope(move |scope| {
+                let folder = thread_folder;
+                let mut files = iterator.map(|f| f.unwrap().file_name()).collect::<Vec<_>>();
+                files.sort();
+                scope.spawn(move || {
+                    for (i, file) in files.into_iter().enumerate() {
+                        let name = folder.join(file);
+
+                        collector.add_frame_png_file(i, name, 2).unwrap();
+                    }
+                });
+                scope.spawn(move || {
+                    println!("Saving gif...");
+                    writer
+                        .write(out, &mut gifski::progress::ProgressBar::new(100))
+                        .unwrap();
+                });
+            });
+
+            fs::remove_dir_all(folder).unwrap();
+        }
     }
 
     #[inline]
@@ -296,7 +421,7 @@ where
     }
 }
 
-impl<'a, S: Serialize> PollockState<'a, S> {
+impl<S: Serialize> PollockState<S> {
     pub fn save_state<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let file = fs::File::create(path)?;
 
@@ -304,13 +429,12 @@ impl<'a, S: Serialize> PollockState<'a, S> {
     }
 }
 
-impl<'a, S: for<'any> Deserialize<'any>> PollockState<'a, S> {
+impl<S: for<'any> Deserialize<'any>> PollockState<S> {
     pub fn load_state<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let file = fs::File::open(path)?;
 
-        let new: PollockStateOwned<S> = serde_json::from_reader(&file)?;
-        self.state = new.state;
-        *self.internal = new.internal;
+        let new: PollockState<S> = serde_json::from_reader(&file)?;
+        *self = new;
 
         Ok(())
     }

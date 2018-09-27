@@ -17,3 +17,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 rand = { version = "0.5", features = ["serde1", "i128_support"] }
+image = "0.20"
+tempfile = "3.0"
+gifski = "0.8"
+crossbeam = "0.4"

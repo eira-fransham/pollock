@@ -2,9 +2,12 @@
 
 #[macro_use]
 extern crate gfx;
+extern crate crossbeam;
 extern crate fnv;
 extern crate gfx_window_glutin;
+extern crate gifski;
 extern crate glutin;
+extern crate image;
 extern crate itertools;
 extern crate nalgebra;
 extern crate palette;
@@ -12,31 +15,38 @@ extern crate rand;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_json;
+extern crate tempfile;
 
 use fnv::FnvHashMap as HashMap;
+use gfx::format::{Formatted, SurfaceTyped};
+use gfx::memory::Typed;
 use gfx::traits::FactoryExt;
 use gfx::Device;
 use gfx_window_glutin as gfx_glutin;
 use glutin::dpi::LogicalSize;
 use glutin::Api::OpenGl;
 use glutin::{GlContext, GlRequest};
-use nalgebra::Vector2;
+use nalgebra::{Matrix3, Vector2};
 use palette::{Srgb, Srgba};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 
 mod render;
-mod state;
+pub mod state;
 
 pub use glutin::VirtualKeyCode as Key;
-pub use render::DrawState;
-pub use state::{ExtendedState, Fill, PollockState, PollockStateOwned, Stroke};
+pub use state::{Fill, PollockState, Stroke};
 pub use std::f64::consts;
+
+use render::DrawState;
+use state::ExtendedState;
 
 type ColorFormat = gfx::format::Srgba8;
 type DepthFormat = gfx::format::DepthStencil;
+type SurfaceData = <<ColorFormat as Formatted>::Surface as SurfaceTyped>::DataType;
 
 pub type V2 = Vector2<f64>;
+pub type Transform = Matrix3<f64>;
 pub type Color = Srgba<u8>;
 
 pub fn v2<X: Into<f64>, Y: Into<f64>>(x: X, y: Y) -> V2 {
@@ -70,85 +80,78 @@ struct KeyHandler<'a, State> {
 }
 
 // TODO: Use type parameters instead of Box<Fn>
-/// Entry point for `Pollock`. This is a builder that allows you to write the
+/// Entry point for `Pollock`. The entrypoint for making a new Pollock project is `setup()`.
+///
+/// To create a new Pollock instance, you call `setup` with a setup function that will be
+/// executed when your application is started.
+///
+/// ```rust
+/// // This will emit a warning saying that you must call `run`
+/// Pollock::setup(|p| {
+///     // Do your setup here
+/// });
+/// ```
+///
+/// To start a Pollock program, you call `run` on the resultant object. This will go
+/// into a loop that will only return when the window is closed, so make sure you've set up
+/// everything that your program needs before you call it.
+///
+/// ```no_run
+/// Pollock::setup(|p| {
+///     // Setup code
+/// }).run();
+/// ```
+///
+/// To actually _do_ anything with Pollock, you need to add code to `draw`. Unlike Processing,
+/// which allows you to call draw functions at any time, Pollock only allows you to draw
+/// in the draw function itself. You can draw to the screen with `p.circle`, `p.rect` and so
+/// forth. For a full list of functions see the documentation for `ExtendedState`.
+///
+/// ```no_run
+/// Pollock::setup(|p| {
+///     // Setup code
+/// }).draw(|p| {
+/// }).run();
+/// ```
 #[must_use = "Pollock does nothing until you call `.run()`"]
-pub struct Pollock<'a, State, SetupFn, DrawFn, UpdateFn> {
+pub struct Pollock<'a, State, SetupFn, DrawFn> {
     setup_fn: Option<SetupFn>,
     draw_fn: DrawFn,
-    update_fn: UpdateFn,
-    hot_reload: bool,
     key_handlers: HashMap<Key, KeyHandler<'a, State>>,
     frame_handlers: Vec<(usize, Box<FnMut(&mut PollockState<State>) + 'a>)>,
 }
 
-impl<'a, S, SFn>
-    Pollock<
-        'a,
-        S,
-        SFn,
-        fn(&mut ExtendedState<&mut PollockState<&S>, DrawState>),
-        fn(&mut PollockState<S>),
-    >
+impl<'a, S, SFn> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)>
 where
-    SFn: FnOnce(&mut PollockStateOwned<()>) -> S,
+    SFn: FnOnce(&mut PollockState<()>) -> S,
 {
     pub fn setup(fun: SFn) -> Self {
         Pollock {
             setup_fn: Some(fun),
             key_handlers: Default::default(),
             frame_handlers: Default::default(),
-            hot_reload: false,
             draw_fn: |_| {},
-            update_fn: |_| {},
         }
     }
 }
 
-impl<'a, S, SFn, DFn, UFn> Pollock<'a, S, SFn, DFn, UFn>
+impl<'a, S, SFn, DFn> Pollock<'a, S, SFn, DFn>
 where
-    SFn: FnOnce(&mut PollockStateOwned<()>) -> S,
-    DFn: FnMut(&mut ExtendedState<&mut PollockState<&S>, DrawState>),
-    UFn: FnMut(&mut PollockState<S>),
+    SFn: FnOnce(&mut PollockState<()>) -> S,
+    DFn: FnMut(&mut ExtendedState<&mut PollockState<S>, DrawState>),
     // TODO: Remove this bound if we're not hot reloading
     S: Serialize,
     for<'any> S: Deserialize<'any>,
 {
-    pub fn draw<F: FnMut(&mut ExtendedState<&mut PollockState<&S>, DrawState>) + 'a>(
+    pub fn draw<F: FnMut(&mut ExtendedState<&mut PollockState<S>, DrawState>) + 'a>(
         self,
         fun: F,
-    ) -> Pollock<'a, S, SFn, F, UFn> {
+    ) -> Pollock<'a, S, SFn, F> {
         Pollock {
             setup_fn: self.setup_fn,
             key_handlers: self.key_handlers,
             frame_handlers: self.frame_handlers,
-            update_fn: self.update_fn,
-            hot_reload: self.hot_reload,
             draw_fn: fun,
-        }
-    }
-
-    pub fn hot_reload(self) -> Pollock<'a, S, SFn, DFn, UFn> {
-        Pollock {
-            setup_fn: self.setup_fn,
-            key_handlers: self.key_handlers,
-            frame_handlers: self.frame_handlers,
-            update_fn: self.update_fn,
-            draw_fn: self.draw_fn,
-            hot_reload: true,
-        }
-    }
-
-    pub fn update<F: FnMut(&mut PollockState<S>) + 'a>(
-        self,
-        fun: F,
-    ) -> Pollock<'a, S, SFn, DFn, F> {
-        Pollock {
-            setup_fn: self.setup_fn,
-            key_handlers: self.key_handlers,
-            frame_handlers: self.frame_handlers,
-            draw_fn: self.draw_fn,
-            hot_reload: self.hot_reload,
-            update_fn: fun,
         }
     }
 
@@ -207,38 +210,23 @@ where
         self
     }
 
-    // Seperate everything out so we get destructors run on hot reload
-    fn run_internal(mut self) -> Option<std::path::PathBuf> {
+    pub fn run(mut self) {
         use gfx::Factory;
         use render::{pipe, Transform};
-        use std::{env, fs, mem, time};
+        use std::{env, fs, mem};
 
-        let current_exe = env::current_exe().unwrap();
-        let mut mod_time = if self.hot_reload {
-            Some((
-                fs::metadata(&current_exe).unwrap().modified().unwrap(),
-                time::Instant::now(),
-            ))
-        } else {
-            None
-        };
-
-        let mut state_owned: PollockStateOwned<S> = if let Ok(statefile) = env::var("POLLOCK_STATE")
-        {
+        let mut state: PollockState<S> = if let Ok(statefile) = env::var("POLLOCK_STATE") {
             // TODO: Handle this more gracefully
             let file =
                 fs::File::open(&statefile).expect("Hot reload failed - state file non-existant");
             serde_json::from_reader(&file).expect("Hot reload failed - state file out of date")
         } else {
-            let mut init_state = PollockStateOwned::new((), state::InternalState::default());
+            let mut init_state = PollockState::new((), state::InternalState::default());
 
             let inner_state = (self.setup_fn.take().unwrap())(&mut init_state);
 
             init_state.with_state(inner_state)
         };
-
-        let mut state: PollockState<S> =
-            PollockState::new(state_owned.state, &mut state_owned.internal);
 
         let mut events_loop = glutin::EventsLoop::new();
         let windowbuilder = glutin::WindowBuilder::new()
@@ -253,6 +241,8 @@ where
             contextbuilder,
             &events_loop,
         );
+
+        let (mut cached_vertices, mut cached_indices) = (vec![], vec![]);
 
         // We use this so that we can recreate the whole context after an iteration of
         // the inner loop in which the window was resized (or something else that requires
@@ -279,35 +269,10 @@ where
                     pipe::new(),
                 ).unwrap();
 
-            let mut screen_tex = None;
-
             let mut run_context = true;
-            let (mut cached_vertices, mut cached_indices) = (vec![], vec![]);
-            let mut has_run_once = false;
+            let mut rendered = false;
 
             while run_application && run_context {
-                if let Some((mod_time, last_check)) = &mut mod_time {
-                    let now = time::Instant::now();
-
-                    if now - *last_check > time::Duration::from_secs(1) {
-                        if let Ok(modified) = fs::metadata(&current_exe).and_then(|m| m.modified())
-                        {
-                            println!("{:?}", modified);
-                            if modified > *mod_time {
-                                let filename = std::path::PathBuf::from("HOT_RELOAD_FILE");
-
-                                let outfile = fs::File::create(&filename).unwrap();
-
-                                serde_json::to_writer(&outfile, &state).unwrap();
-
-                                return Some(filename);
-                            } else {
-                                *last_check = now;
-                            }
-                        }
-                    }
-                }
-
                 // We do this at the start so that the window size is refreshed
                 if state.size_dirty() {
                     let size = LogicalSize::from_physical(state.size, 2.0);
@@ -336,6 +301,7 @@ where
                                 if let Some(key) = input.virtual_keycode {
                                     match input.state {
                                         ElementState::Pressed => {
+                                            state.keys.press(key);
                                             if let Some(handler) = self
                                                 .key_handlers
                                                 .get_mut(&key)
@@ -345,6 +311,7 @@ where
                                             }
                                         }
                                         ElementState::Released => {
+                                            state.keys.release(key);
                                             if let Some(handler) = self
                                                 .key_handlers
                                                 .get_mut(&key)
@@ -356,13 +323,13 @@ where
                                     }
                                 }
                             }
-                            glutin::WindowEvent::Refresh => run_context = !has_run_once,
+                            glutin::WindowEvent::Refresh => run_context = !rendered,
                             _ => {}
                         }
                     }
                 });
 
-                if has_run_once && state.paused {
+                if rendered && state.paused {
                     continue;
                 }
 
@@ -387,68 +354,35 @@ where
                     ],
                 };
 
-                // We cache the allocation for the vertices since we assume that it's rare that we will
-                // reduce the number of vertices in a scene significantly over the course of a run.
-                // If this assumption is violated we can shrink using heuristics like the average vec
-                // size over the past N frames or whatever.
-                //
-                // See below for where we switch them back.
-                let draw_state = RefCell::new(DrawState::new(
-                    mem::replace(&mut cached_vertices, vec![]),
-                    mem::replace(&mut cached_indices, vec![]),
-                ));
-
                 if !state.paused {
-                    (self.update_fn)(&mut state);
-                }
+                    cached_vertices.clear();
+                    cached_indices.clear();
 
-                let mut maybe_internal = if state.paused {
-                    Some((*state).clone())
-                } else {
-                    None
-                };
+                    // We cache the allocation for the vertices since we assume that it's rare that we will
+                    // reduce the number of vertices in a scene significantly over the course of a run.
+                    // If this assumption is violated we can shrink using heuristics like the average vec
+                    // size over the past N frames or whatever.
+                    let draw_state = RefCell::new(DrawState::new(
+                        mem::replace(&mut cached_vertices, vec![]),
+                        mem::replace(&mut cached_indices, vec![]),
+                    ));
 
-                let mut borrowed = if let Some(internal) = &mut maybe_internal {
-                    PollockState::new(&state.state, internal)
-                } else {
-                    PollockState::new(&state.state, &mut state.internal)
-                };
-                let mut ex_state = borrowed.extend(&draw_state);
-                (self.draw_fn)(&mut ex_state);
+                    let mut ex_state = state.extend(&draw_state);
+                    (self.draw_fn)(&mut ex_state);
 
-                let (vertex_buffer, slice) = {
-                    let inner = ex_state.inner.borrow();
-
-                    factory.create_vertex_buffer_with_slice(&inner.vertices[..], &inner.indices[..])
-                };
-
-                {
                     let inner = &mut *ex_state.inner.borrow_mut();
                     cached_vertices = mem::replace(&mut inner.vertices, vec![]);
                     cached_indices = mem::replace(&mut inner.indices, vec![]);
-                    cached_vertices.clear();
-                    cached_indices.clear();
+
+                    state.frame_count += 1;
                 }
 
+                let (vertex_buffer, slice) = {
+                    factory
+                        .create_vertex_buffer_with_slice(&cached_vertices[..], &cached_indices[..])
+                };
+
                 let transform_buffer = factory.create_constant_buffer(1);
-
-                let to_tex_data = state.save_frame.take().map(|path| {
-                    use gfx::memory::{Bind, Usage};
-                    use gfx::texture::{AaMode, Kind};
-
-                    let tex = screen_tex.take().unwrap_or_else(|| {
-                        factory
-                            .create_texture::<gfx::format::R8_G8_B8_A8>(
-                                Kind::D2(0, 0, AaMode::Single),
-                                0,
-                                Bind::RENDER_TARGET,
-                                Usage::Download,
-                                None,
-                            ).unwrap()
-                    });
-
-                    (tex, path)
-                });
 
                 let data = pipe::Data {
                     vbuf: vertex_buffer.clone(),
@@ -471,18 +405,57 @@ where
                     .unwrap();
                 encoder.draw(&slice, &pso, &data);
 
-                if let Some((tex, ..)) = &to_tex_data {
-                    encoder.draw(
-                        &slice,
-                        &pso,
-                        &pipe::Data {
-                            vbuf: vertex_buffer.clone(),
-                            transform: transform_buffer.clone(),
-                            out: factory
-                                .view_texture_as_render_target(&tex, 0, None)
-                                .unwrap(),
-                        },
-                    );
+                let (w, h, _, _) = data.out.get_dimensions();
+
+                // Take screenshot/record gif
+                // TODO: Just do a filesystem copy instead of taking the screenshot twice
+                for path in state.save_paths() {
+                    let download = factory
+                        .create_download_buffer::<SurfaceData>(w as usize * h as usize)
+                        .unwrap();
+
+                    encoder
+                        .copy_texture_to_buffer_raw(
+                            data.out.raw().get_texture(),
+                            None,
+                            gfx::texture::RawImageInfo {
+                                xoffset: 0,
+                                yoffset: 0,
+                                zoffset: 0,
+                                width: w,
+                                height: h,
+                                depth: 0,
+                                format: ColorFormat::get_format(),
+                                mipmap: 0,
+                            },
+                            download.raw(),
+                            0,
+                        ).unwrap();
+
+                    encoder.flush(&mut device);
+
+                    let reader = factory.read_mapping(&download).unwrap();
+                    // intermediary buffer only to avoid casting
+                    let mut data = Vec::with_capacity(w as usize * h as usize * 4);
+
+                    for pixel in reader.iter() {
+                        data.extend(pixel);
+                    }
+
+                    let path: &std::path::Path = path.as_ref();
+                    let path_with_ext = if path.extension().is_some() {
+                        path.to_owned()
+                    } else {
+                        path.with_extension("png")
+                    };
+
+                    image::save_buffer(
+                        &path_with_ext,
+                        &data,
+                        w as u32,
+                        h as u32,
+                        image::ColorType::RGBA(8),
+                    ).unwrap();
                 }
 
                 encoder.flush(&mut device);
@@ -490,33 +463,8 @@ where
                 window.swap_buffers().unwrap();
                 device.cleanup();
 
-                if let Some((tex, path)) = to_tex_data {
-                    unimplemented!();
-                }
-
-                state.frame_count += 1;
-
-                has_run_once = true;
+                rendered = true;
             }
-        }
-
-        None
-    }
-
-    pub fn run(self) {
-        use std::env;
-        use std::os::unix::process::CommandExt;
-        use std::process::Command;
-
-        let current_exe = env::current_exe().unwrap();
-
-        if let Some(written_path) = self.run_internal() {
-            Command::new(current_exe)
-                .args(env::args())
-                .envs(env::vars().chain(::std::iter::once((
-                    "POLLOCK_STATE".to_string(),
-                    written_path.to_string_lossy().into_owned(),
-                )))).exec();
         }
     }
 }
