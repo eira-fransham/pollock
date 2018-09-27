@@ -204,17 +204,17 @@ where
 
     #[inline]
     pub fn rotate(&mut self, radians: f64) {
-        self.transform *= Transform::new_rotation(radians);
+        self.transform = Transform::new_rotation(radians) * self.transform;
     }
 
     #[inline]
     pub fn translate(&mut self, translate: V2) {
-        self.transform *= Transform::new_translation(&translate);
+        self.transform = Transform::new_translation(&translate) * self.transform;
     }
 
     #[inline]
     pub fn scale<Scl: Scale>(&mut self, scale: Scl) {
-        self.transform *= Transform::new_nonuniform_scaling(&scale.into_scale());
+        self.transform = Transform::new_nonuniform_scaling(&scale.into_scale()) * self.transform;
     }
 }
 
@@ -333,15 +333,15 @@ impl<S> PollockState<S> {
     }
 
     pub fn rotate(&mut self, radians: f64) {
-        self.transform *= Transform::new_rotation(radians);
+        self.transform = Transform::new_rotation(radians) * self.transform;
     }
 
     pub fn translate(&mut self, translate: V2) {
-        self.transform *= Transform::new_translation(&translate);
+        self.transform = Transform::new_translation(&translate) * self.transform;
     }
 
     pub fn scale<Scl: Scale>(&mut self, scale: Scl) {
-        self.transform *= Transform::new_nonuniform_scaling(&scale.into_scale());
+        self.transform = Transform::new_nonuniform_scaling(&scale.into_scale()) * self.transform;
     }
 
     #[inline]

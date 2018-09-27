@@ -354,17 +354,14 @@ where
 
                 let (w, h) = (state.size.0 as f32, state.size.1 as f32);
 
-                //Identity Matrix
                 let largest_side = w.max(h);
-                let (move_x, move_y) = (w / largest_side, h / largest_side);
-                let scale = 2. / largest_side;
 
                 let transform = Transform {
                     transform: [
-                        [scale, 0.0, 0.0, -move_x],
+                        [2. / w, 0.0, 0.0, -1.],
                         // We do `-scale` here so that our coordinate system starts from the top-left
                         // instead of the bottom-left.
-                        [0.0, -scale, 0.0, move_y],
+                        [0.0, -2. / h, 0.0, 1.],
                         [0.0, 0.0, 1.0, 0.0],
                         [0.0, 0.0, 0.0, 1.0],
                     ],
