@@ -82,9 +82,9 @@ impl DrawState {
 
     /// Draw any convex polygon without lines
     #[inline]
-    fn convex_poly<I>(&mut self, transformation: &::Transform, stroke: Stroke, fill: Fill, verts: I)
+    fn convex_poly<I>(&mut self, transformation: &::Transform, fill: Fill, verts: I)
     where
-        I: Iterator<Item = V2WithNorm> + ExactSizeIterator,
+        I: Iterator<Item = V2> + ExactSizeIterator,
     {
         use itertools::Itertools;
 
@@ -92,7 +92,6 @@ impl DrawState {
             return;
         }
 
-        let half_t = stroke.thickness / 2.;
         let start = self.vertices.len() as u32;
         let fill_color = [
             fill.color.color.red as f32 / 255.,
@@ -102,8 +101,7 @@ impl DrawState {
         ];
         let len = verts.len();
         self.vertices.extend(verts.map(|v| {
-            let norm = v.norm * half_t;
-            let pos = transformation.transform_point(&Point::from_coordinates(v.pos + norm));
+            let pos = transformation.transform_point(&Point::from_coordinates(v));
 
             Vertex {
                 pos: [pos.x as f32, pos.y as f32, 0., 1.0],
@@ -226,21 +224,34 @@ where
         I: Iterator<Item = V2WithNorm> + ExactSizeIterator + Clone,
     {
         let mut inner = self.inner.borrow_mut();
-        inner.convex_poly(self.transform(), self.stroke(), self.fill(), verts.clone());
+        inner.convex_poly(
+            self.transform(),
+            self.fill(),
+            verts.clone().map(|v| v.pos),
+        );
         inner.lines(self.transform(), self.stroke(), verts, true);
     }
 
+    /// Sets a single pixel to a certain color. You can draw this at sub-pixel granularity.
     pub fn set(&self, _pos: V2, _color: Color) {
         // TODO: Draw a single small square here - very inefficient but simple to implement and
         //       software rendering like this was never going to be efficient.
         unimplemented!()
     }
 
+    /// Draw a circle with the given radius, at the given position.
+    /// To set the color, use the `fill` field of `PollockState`.
+    /// To set the thickness and the color of the border, use the `stroke` field of
+    /// `PollockState`.
     pub fn circle<R: Into<f64>>(&self, pos: V2, rad: R) {
         let rad = rad.into();
         self.ellipse(pos, rad, rad)
     }
 
+    /// Draw an ellipse with the given x and y radius
+    /// To set the color, use the `fill` field of `PollockState`.
+    /// To set the thickness and the color of the border, use the `stroke` field of
+    /// `PollockState`.
     pub fn ellipse<RX: Into<f64>, RY: Into<f64>>(&self, pos: V2, rad_x: RX, rad_y: RY) {
         use std::f32::consts::PI;
 
@@ -258,6 +269,12 @@ where
         }));
     }
 
+    /// Draw a rectangle at the given position with the given width and height. This
+    /// draws it from the top-left (so the top-left corner will be at `pos`). To
+    /// draw a centered rectangle you can do `p.rect(pos - v2(w / 2., h / 2.), w, h)`.
+    /// To set the color, use the `fill` field of `PollockState`.
+    /// To set the thickness and the color of the border, use the `stroke` field of
+    /// `PollockState`.
     pub fn rect<W: Into<f64>, H: Into<f64>>(&self, pos: V2, width: W, height: H) {
         use std::f32::consts::SQRT_2;
 
@@ -280,10 +297,12 @@ where
         );
     }
 
+    /// Draw a single line from `a` to `b` (currently only supports square corners).
+    /// To set the thickness and the color, use the `stroke` field of `PollockState`.
     #[inline]
     pub fn line(&self, a: V2, b: V2) {
         let diff = b - a;
-        let norm = v2(-diff.x, diff.y);
+        let norm = v2(-diff.y, diff.x);
         self.inner.borrow_mut().lines(
             self.transform(),
             self.stroke(),
@@ -292,6 +311,15 @@ where
         );
     }
 
+    /// Draw a series of lines from an iterator. This can either be a premade list (such
+    /// as a vector) or it can be generated on the fly using Rust's iterator adapters.
+    /// For example, to draw a sine wave you could do:
+    ///
+    /// ```no_run
+    /// # Pollock::setup(|_| {}).draw(|p| {
+    /// p.lines((0..100).map(|i| v2(i, (i as f64 / 50.).sin() * 100.)));
+    /// # });
+    /// ```
     #[inline]
     pub fn lines<I: IntoIterator<Item = V2>>(&self, verts: I) {
         use itertools::Itertools;
@@ -327,6 +355,8 @@ where
         )
     }
 
+    /// Draw a possibly-concave polygon from a series of points (in either clockwise or
+    /// anticlockwise order).
     #[inline]
     pub fn polygon<I>(&self, verts: I)
     where
@@ -363,6 +393,22 @@ where
         );
     }
 
+    /// Push a new state onto the stack. This can be used to temporarily edit the transformation matrix
+    /// or the stroke/fill. Unlike in Processing, this doesn't push the transformation to an internal
+    /// buffer, it creates a new value that can be mutated, and the mutations will be undone when the
+    /// value goes out of scope. Since it doesn't mutate anything, there is no `pop`. You can treat it
+    /// like the original state that it was created from, except that you can't edit any values on
+    /// the original state until this one goes out of scope. When you use this function you'll normally
+    /// create a new variable with the same name as the original:
+    ///
+    /// ```no_run
+    /// Pollock::setup(|_| {})
+    ///     .draw(|p| {
+    ///         let mut p = p.push();
+    ///         // Use new `p`.
+    ///         // New `p` goes out of scope, all mutations are undone.
+    ///     })
+    /// ```
     #[inline]
     #[must_use = "`.push` doesn't mutate the state like in Processing, in Pollock you must assign the result to a variable, like `let mut p = p.push()`. The stack will be popped automatically when this variable goes out of scope."]
     pub fn push(&self) -> ExtendedState<StateWithModifications<S>, DrawState> {
@@ -372,6 +418,17 @@ where
         }
     }
 
+    /// Allows you to set the rotation temporarily. It's equivalent to doing `state.push` and immediately
+    /// setting the rotation. Note that because the transformations work as a stack this might not do what
+    /// you expect. Doing `p.translate(...)` and then calling `p.with_rotation(...).circle(...)` will rotate
+    /// the translation around the origin! To make an element that is rotated as well as translated, you can
+    /// do the translation after the rotation.
+    ///
+    /// For example:
+    ///
+    /// ```no_run
+    /// p.with_rotation(0.5).circle(v2(0, 0), 10);
+    /// ```
     #[inline]
     // We don't use `Into<f64>` here because that encourages people accidentally supplying degrees
     // Obviously they'll realise pretty quick but there's no reason to ever supply radians as a
@@ -385,6 +442,15 @@ where
         out
     }
 
+    /// Allows you to set the translation temporarily. It's equivalent to doing `state.push` and immediately
+    /// setting the scale. This isn't very helpful on its own but is useful combined with `rotation` and
+    /// `scale`.
+    ///
+    /// For example:
+    ///
+    /// ```no_run
+    /// p.with_translation(v2(10, 10)).circle(v2(0, 0), 10);
+    /// ```
     #[inline]
     pub fn with_translation(
         &self,
@@ -395,6 +461,17 @@ where
         out
     }
 
+    /// Allows you to set the scale temporarily. It's equivalent to doing `state.push` and immediately
+    /// setting the scale. Note that because the transformations work as a stack this might not do what
+    /// you expect. Doing `p.translate(...)` and then calling `p.with_scale(...).circle(...)` will scale
+    /// up the translation, too! To make an element that is scaled up while preserving the translation,
+    /// you can do the translation after the scale.
+    ///
+    /// For example:
+    ///
+    /// ```no_run
+    /// p.with_scale(10).circle(v2(0, 0), 10);
+    /// ```
     #[inline]
     pub fn with_scale<Scl: Scale>(
         &self,
@@ -405,6 +482,14 @@ where
         out
     }
 
+    /// Allows you to set the stroke temporarily. It's equivalent to doing `state.push` and immediately
+    /// setting the stroke.
+    ///
+    /// For example:
+    ///
+    /// ```no_run
+    /// p.with_stroke(Stroke::new(rgb(0, 0, 0), 3)).circle(v2(0, 0), 10);
+    /// ```
     #[inline]
     pub fn with_stroke(
         &self,
@@ -415,6 +500,14 @@ where
         out
     }
 
+    /// Allows you to set the fill temporarily. It's equivalent to doing `state.push` and immediately
+    /// setting the fill.
+    ///
+    /// For example:
+    ///
+    /// ```no_run
+    /// p.with_fill(Fill::new(rgb(255, 0, 0))).circle(v2(0, 0), 10);
+    /// ```
     #[inline]
     pub fn with_fill(&self, fill: Fill) -> ExtendedState<StateWithModifications<S>, DrawState> {
         let mut out = self.push();

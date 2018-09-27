@@ -49,33 +49,36 @@ type ColorFormat = gfx::format::Srgba8;
 type DepthFormat = gfx::format::DepthStencil;
 type SurfaceData = <<ColorFormat as Formatted>::Surface as SurfaceTyped>::DataType;
 
+/// A 2-dimensional vector. This is used to represent position everywhere in `Pollock`.
+/// You probably want to create this with the `v2` function, which does type coercion
+/// for you.
 pub type V2 = Vector2<f64>;
+/// A transformation that can be applied to a `V2`.
 pub type Transform = Matrix3<f64>;
+/// A color in `RGBA` format. You can create this with the `rgb` and `rgba` functions.
 pub type Color = Srgba<u8>;
 
+/// Create a vector, coercing the type of `x` and `y` if possible.
 pub fn v2<X: Into<f64>, Y: Into<f64>>(x: X, y: Y) -> V2 {
     V2::new(x.into(), y.into())
 }
 
+/// Create a color from red, green and blue components from 0 to 255. For example,
+/// red is `rgb(255, 0, 0)`, white is `rgb(255, 255, 255)`, grey is `rgb(120, 120, 120)`.
+/// If you have a HTML color to work from, you can convert it to parameters to this function
+/// easily: if you have a 6-character color like `#A133A8` (I don't know if that color's
+/// really ugly, I just came up with it randomly) you can call `rgb(0xA1, 0x33, 0xA8)`.
+/// Notice that I've split it into 3 parts and started it with `0x`. The `0x` means that the
+/// color is in hexadecimal.
 pub fn rgb(r: u8, g: u8, b: u8) -> Color {
     Srgb::new(r, g, b).into()
 }
 
+/// Create a color from red, green, blue and alpha (opacity) components from 0 to 255. This
+/// works the same as the `rgb` function, except that you can make the color translucent by
+/// passing a number less than `255` as the `a` parameter.
 pub fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
     Srgba::new(r, g, b, a)
-}
-
-#[macro_export]
-macro_rules! state {
-    ($($name:ident : $t:ty = $val:expr),*$(,)*) => {{
-        struct State {
-            $($name : $t),*
-        }
-
-        State {
-            $($name: $val),*
-        }
-    }};
 }
 
 struct KeyHandler<'a, State> {
@@ -130,13 +133,26 @@ pub struct Pollock<'a, State, SetupFn, DrawFn> {
     frame_handlers: Vec<(usize, Box<FnMut(&mut PollockState<State>) + 'a>)>,
 }
 
-impl<'a, S, SFn> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)> {
+impl<'a, S, SFn> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)>
+where
+    SFn: FnOnce(&mut PollockState<()>) -> S,
+{
+    /// Start creating a `Pollock` application. This function takes a closure that is called
+    /// when the application is started. In this closure you can set the size of the window,
+    /// choose the default fill and stroke, et cetera.
+    ///
+    /// If you want to have state persisted between frames, you have two options. The first is
+    /// to just use global variables that the `setup` and `draw` functions close over. The
+    /// second is to create a struct that contains all the variables that you want to keep
+    /// between frames, and return an instance of this struct from the closure passed to
+    /// `setup`. If you do this, you can access your instance of the state struct in the `draw`
+    /// closure (and all other callbacks) under the `state` field of `p`. This does require
+    /// that you annotate the types that you want to keep between frames, but it allows you to
+    /// save the state of your application for free. This works similarly to savestates in
+    /// emulators.
     pub fn setup(
         fun: SFn,
-    ) -> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)>
-    where
-        SFn: FnOnce(&mut PollockState<()>) -> S,
-    {
+    ) -> Pollock<'a, S, SFn, fn(&mut ExtendedState<&mut PollockState<S>, DrawState>)> {
         Pollock {
             setup_fn: Some(fun),
             key_handlers: Default::default(),
@@ -154,6 +170,9 @@ where
     S: Serialize,
     for<'any> S: Deserialize<'any>,
 {
+    /// This function is called every frame. It is different to the other functions in that instead
+    /// of the callback taking a `PollockState`, it takes an `ExtendedState`. This is a wrapper that
+    /// allows you to draw to the screen.
     pub fn draw<F: FnMut(&mut ExtendedState<&mut PollockState<S>, DrawState>) + 'a>(
         self,
         fun: F,
@@ -166,7 +185,9 @@ where
         }
     }
 
-    // TODO: Do we need this?
+    /// The callback passed as the second parameter is called when the given frame number is reached.
+    /// This is useful for recording looping gifs if you know the frame that it should start and end.
+    /// The gif on Pollock's readme is recorded using this technique.
     pub fn on_frame<F: FnMut(&mut PollockState<S>) + 'a>(mut self, frame: usize, fun: F) -> Self {
         match self
             .frame_handlers
@@ -179,6 +200,7 @@ where
         self
     }
 
+    /// The callback passed as the second parameter is called when the supplied key is pressed.
     pub fn on_key_down<F: FnMut(&mut PollockState<S>) + 'a>(mut self, key: Key, fun: F) -> Self {
         use std::collections::hash_map::Entry;
 
@@ -200,6 +222,7 @@ where
         self
     }
 
+    /// The callback passed as the second parameter is called when the supplied key is released.
     pub fn on_key_up<F: FnMut(&mut PollockState<S>) + 'a>(mut self, key: Key, fun: F) -> Self {
         use std::collections::hash_map::Entry;
 
@@ -221,6 +244,8 @@ where
         self
     }
 
+    /// Start the Pollock process. This opens a window, calls `setup` and then repeatedly calls
+    /// `draw`.
     pub fn run(mut self) {
         use gfx::Factory;
         use render::{pipe, Transform};
@@ -254,6 +279,7 @@ where
         );
 
         let (mut cached_vertices, mut cached_indices) = (vec![], vec![]);
+        let mut size_at_last_update = state.size;
 
         // We use this so that we can recreate the whole context after an iteration of
         // the inner loop in which the window was resized (or something else that requires
@@ -285,13 +311,13 @@ where
 
             while run_application && run_context {
                 // We do this at the start so that the window size is refreshed
-                if state.size_dirty() {
+                if size_at_last_update != state.size {
                     let size = LogicalSize::from_physical(state.size, 2.0);
                     window.set_min_dimensions(Some(size));
                     window.set_max_dimensions(Some(size));
                     window.set_inner_size(size);
 
-                    state.refresh_size();
+                    size_at_last_update = state.size;
                 }
 
                 events_loop.poll_events(|event| {
@@ -353,8 +379,6 @@ where
                 }
 
                 let (w, h) = (state.size.0 as f32, state.size.1 as f32);
-
-                let largest_side = w.max(h);
 
                 let transform = Transform {
                     transform: [

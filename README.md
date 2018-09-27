@@ -16,7 +16,7 @@ Pollock is designed to allow quick hacking on code that you don't intend to ever
 
 If you've used Processing before the API will look familiar. If you've used some popular Rust game frameworks the API will probably look totally alien. For a start, you don't define a trait. I chose to use the builder pattern to avoid the problem of having to annotate types everywhere, and to mean that you need to understand less of Rust to be able to write something, even if it's only something simple, in Rust.
 
-```rust
+```rust,no_run
 extern crate pollock;
 
 use pollock::*;
@@ -51,7 +51,7 @@ The way you do mutable state in Python is to just use global variables. This wor
 
 Using a state struct is as easy as just returning it from the `setup` function and then using `p.state` to access it in your main loop. For example, for a simple sketch that shows some bouncing balls it might look something like this:
 
-```rust
+```rust,no_run
 extern crate pollock;
 extern crate serde;
 #[macro_use]
