@@ -24,7 +24,8 @@ use pollock::*;
 fn main() {
     Pollock::setup(|p| {
         p.size = (600, 480);
-        p.background = rgb(255, 255, 255);
+        // Like 
+        p.background = Fill::default();
         p.fill = Fill::none();
         p.stroke = Stroke::new(rgb(0, 0, 0), 3);
     }).draw(|p| {
@@ -69,7 +70,7 @@ fn main() {
 
     Pollock::setup(|p| {
         p.size = (600, 480);
-        p.background = Color::new(255, 255, 255, 255);
+        p.background = Fill::default();
         p.stroke = Stroke::none();
         // We add alpha so we can see where the balls intersect
         // (also so I can show off the `rgba` function.
