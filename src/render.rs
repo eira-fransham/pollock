@@ -6,12 +6,9 @@ use {v2, Color, ColorFormat, V2};
 
 use gfx;
 
-macro_rules! fixed_size_iter {
-    ($one:expr) => {
-        ::std::iter::once($one)
-    };
-    ($first:expr$(, $next:expr)+) => {
-        fixed_size_iter!($first).chain(fixed_size_iter!($($next),*))
+macro_rules! arr {
+    ($($elem:expr),+$(,)*) => {
+        ::arrayvec::ArrayVec::from([$($elem),*])
     }
 }
 
@@ -111,7 +108,7 @@ impl DrawState {
         self.indices.extend(
             (1..len)
                 .tuple_windows()
-                .flat_map(|(b, c)| fixed_size_iter![start, start + b as u32, start + c as u32]),
+                .flat_map(|(b, c)| arr![start, start + b as u32, start + c as u32]),
         );
     }
 
@@ -123,13 +120,15 @@ impl DrawState {
         verts: I,
         connect_back: bool,
     ) where
-        I: Iterator<Item = V2WithNorm>,
+        I: IntoIterator<Item = V2WithNorm>,
     {
         use itertools::Itertools;
 
         if stroke.is_none() {
             return;
         }
+
+        let verts = verts.into_iter();
 
         let half_t = stroke.thickness / 2.;
         let start = self.vertices.len() as u32;
@@ -166,7 +165,7 @@ impl DrawState {
                 .flat_map(|(cur, next)| {
                     let first = cur * 2;
                     let next = next * 2;
-                    fixed_size_iter![
+                    arr![
                         first,
                         first + 1,
                         next,
@@ -182,7 +181,8 @@ impl DrawState {
                                  // first,
                                  // first + 1,
                                  // next + 1
-                    ].map(|i| i + start)
+                    ].into_iter()
+                    .map(|i| i + start)
                 }),
         );
     }
@@ -221,13 +221,14 @@ where
     /// components of a concave polygon too.
     fn convex_poly<I>(&self, verts: I)
     where
-        I: Iterator<Item = V2WithNorm> + ExactSizeIterator + Clone,
+        I: IntoIterator<Item = V2WithNorm> + Clone,
+        I::IntoIter: ExactSizeIterator,
     {
         let mut inner = self.inner.borrow_mut();
         inner.convex_poly(
             self.transform(),
             self.fill(),
-            verts.clone().map(|v| v.pos),
+            verts.clone().into_iter().map(|v| v.pos),
         );
         inner.lines(self.transform(), self.stroke(), verts, true);
     }
@@ -269,6 +270,19 @@ where
         }));
     }
 
+    /// Draw a rectangle at the given position with the given size. This draws
+    /// it from the top-left (so the top-left corner will be at `pos`). To
+    /// draw a centered square you can do `p.square(pos - v2(s / 2., s / 2.), s)`
+    /// where `s` is the square's size.
+    /// To set the color, use the `fill` field of `PollockState`.
+    /// To set the thickness and the color of the border, use the `stroke` field of
+    /// `PollockState`.
+    #[inline]
+    pub fn square<W: Into<f64>>(&self, pos: V2, size: W) {
+        let size = size.into();
+        self.rect(pos, size, size);
+    }
+
     /// Draw a rectangle at the given position with the given width and height. This
     /// draws it from the top-left (so the top-left corner will be at `pos`). To
     /// draw a centered rectangle you can do `p.rect(pos - v2(w / 2., h / 2.), w, h)`.
@@ -297,6 +311,20 @@ where
         );
     }
 
+    /// Draw a simple triangle between 3 points. If you want to draw a more complex
+    /// shape between some number of points, use the `polygon` method.
+    /// To set the color, use the `fill` field of `PollockState`.
+    /// To set the thickness and the color of the border, use the `stroke` field of
+    /// `PollockState`.
+    #[inline]
+    pub fn triangle(&self, a: V2, b: V2, c: V2) {
+        let make_v = |last, cur, next| V2WithNorm {
+            pos: cur,
+            norm: miter(last, cur, next),
+        };
+        self.convex_poly(arr![make_v(a, b, c), make_v(b, c, a), make_v(c, a, b)]);
+    }
+
     /// Draw a single line from `a` to `b` (currently only supports square corners).
     /// To set the thickness and the color, use the `stroke` field of `PollockState`.
     #[inline]
@@ -306,7 +334,7 @@ where
         self.inner.borrow_mut().lines(
             self.transform(),
             self.stroke(),
-            fixed_size_iter![V2WithNorm { pos: a, norm }, V2WithNorm { pos: b, norm }],
+            arr![V2WithNorm { pos: a, norm }, V2WithNorm { pos: b, norm }],
             false,
         );
     }

@@ -6,6 +6,7 @@
 #[macro_use]
 extern crate gfx;
 extern crate alga;
+extern crate arrayvec;
 extern crate crossbeam;
 extern crate fnv;
 extern crate gfx_window_glutin;
@@ -305,6 +306,25 @@ where
                     },
                     pipe::new(),
                 ).unwrap();
+            let background_transform = {
+                let transform_buffer = factory.create_constant_buffer(1);
+
+                let transform = Transform {
+                    transform: [
+                        [1., 0., 0., 0.],
+                        [0., 1., 0., 0.],
+                        [0., 0., 1., 0.],
+                        [0., 0., 0., 1.],
+                    ],
+                };
+
+                encoder
+                    .update_buffer(&transform_buffer, &[transform], 0)
+                    .unwrap();
+
+                transform_buffer
+            };
+            let transform_buffer = factory.create_constant_buffer(1);
 
             let mut run_context = true;
             let mut rendered = false;
@@ -419,23 +439,64 @@ where
                         .create_vertex_buffer_with_slice(&cached_vertices[..], &cached_indices[..])
                 };
 
-                let transform_buffer = factory.create_constant_buffer(1);
-
                 let data = pipe::Data {
                     vbuf: vertex_buffer.clone(),
                     transform: transform_buffer.clone(),
                     out: color_view.clone(),
                 };
 
-                encoder.clear(
-                    &color_view,
-                    [
-                        state.background.color.red as f32 / 255.,
-                        state.background.color.green as f32 / 255.,
-                        state.background.color.blue as f32 / 255.,
-                        state.background.alpha as f32 / 255.,
-                    ],
-                );
+                if state.background.color.alpha == 255 {
+                    encoder.clear(
+                        &color_view,
+                        [
+                            state.background.color.color.red as f32 / 255.,
+                            state.background.color.color.green as f32 / 255.,
+                            state.background.color.color.blue as f32 / 255.,
+                            state.background.color.alpha as f32 / 255.,
+                        ],
+                    );
+                } else if state.background.color.alpha > 0 {
+                    let (vertex_buffer, slice) = {
+                        use render::Vertex;
+
+                        let color = [
+                            state.background.color.color.red as f32 / 255.,
+                            state.background.color.color.green as f32 / 255.,
+                            state.background.color.color.blue as f32 / 255.,
+                            state.background.color.alpha as f32 / 255.,
+                        ];
+
+                        factory.create_vertex_buffer_with_slice(
+                            &[
+                                Vertex {
+                                    pos: [-1., -1., 0., 1.],
+                                    color,
+                                },
+                                Vertex {
+                                    pos: [1., -1., 0., 1.],
+                                    color,
+                                },
+                                Vertex {
+                                    pos: [1., 1., 0., 1.],
+                                    color,
+                                },
+                                Vertex {
+                                    pos: [-1., 1., 0., 1.],
+                                    color,
+                                },
+                            ][..],
+                            &[0u16, 1, 2, 2, 3, 0][..],
+                        )
+                    };
+
+                    let data = pipe::Data {
+                        vbuf: vertex_buffer.clone(),
+                        transform: background_transform.clone(),
+                        out: color_view.clone(),
+                    };
+
+                    encoder.draw(&slice, &pso, &data);
+                }
 
                 encoder
                     .update_buffer(&data.transform, &[transform], 0)

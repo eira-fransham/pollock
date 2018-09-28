@@ -1,3 +1,9 @@
+//! This module contains all the types and functions needed to interact with the
+//! Pollock state. To see all the fields available to read and modify (for example,
+//! the fill, the stroke, the current frame number), see `InternalState`. The
+//! `PollockState` struct contains this, as well as your application's own state
+//! struct if you have one.
+
 use fnv::FnvHashSet as HashSet;
 use rand::distributions::uniform::SampleUniform;
 use rand::distributions::{Distribution, Standard};
@@ -10,9 +16,16 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 use {serde_json, v2, Color, Key, Transform, V2};
 
+/// The color and thickness of lines to use when drawing.
+/// You probably don't need to access the fields directly,
+/// just use `Stroke::new`.
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct Stroke {
+    /// The color of the stroke.
     pub color: Color,
+    /// The thickness of the stroke (this is the total
+    /// thickness, not the half-thickness as in some
+    /// drawing software).
     pub thickness: f64,
 }
 
@@ -26,6 +39,11 @@ impl Default for Stroke {
 }
 
 impl Stroke {
+    /// Create a new `Stroke` from the color and thickness. To create a `Color`,
+    /// use the `rgb` or `rgba` functions in the root. If you want to do more
+    /// complex work with colors, you can use the `palette` crate which is
+    /// re-exported from the root.
+    #[inline]
     pub fn new<C: Into<Color>, T: Into<f64>>(color: C, thickness: T) -> Self {
         Stroke {
             color: color.into(),
@@ -33,17 +51,29 @@ impl Stroke {
         }
     }
 
+    /// Create a new empty `Stroke`. This means that when you draw a shape, it will
+    /// have no outline. It also makes `.line`/`.lines` do nothing, so if you are
+    /// wondering why your lines aren't showing up, check that the stroke is set to
+    /// something visible.
+    #[inline]
     pub fn none() -> Self {
         Stroke::new(Color::new(0, 0, 0, 0), 0)
     }
 
+    /// Check if the stroke is set to the empty `Stroke`.
+    #[inline]
     pub fn is_none(&self) -> bool {
-        self.thickness == 0.
+        self.thickness == 0. || self.color.alpha == 0
     }
 }
 
+/// The color to use when drawing shapes/the background.
+///
+/// You probably don't need to access the fields directly,
+/// just use `Fill::new`.
 #[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct Fill {
+    /// The color to draw with.
     pub color: Color,
 }
 
@@ -56,25 +86,47 @@ impl Default for Fill {
 }
 
 impl Fill {
+    /// Create a new `Stroke` from a color. To create a `Color`,
+    /// use the `rgb` or `rgba` functions in the root. If you want to do more
+    /// complex work with colors, you can use the `palette` crate which is
+    /// re-exported from the root.
     pub fn new<C: Into<Color>>(color: C) -> Self {
         Fill {
             color: color.into(),
         }
     }
 
+    /// Create a new empty `Fill`. If you set `p.fill` to be an empty `Fill`,
+    /// it means that when you draw a shape, it will only be drawn as an outline.
+    /// If you set `p.background` to be an empty `Fill`, it means that the background
+    /// will not be cleared and so things drawn on each frame will stay visible on
+    /// subsequent frames.
     pub fn none() -> Self {
         Fill {
-            color: Color::new(255, 255, 255, 0),
+            color: Color::new(0, 0, 0, 0),
         }
     }
 
+    /// Check if the fill is set to the empty `Fill`.
     pub fn is_none(&self) -> bool {
         self.color.alpha == 0
     }
 }
 
+/// The main state. This is accessible in all callbacks, as well as in the setup function.
+/// The `State` parameter is your application-specific state. You will probably never need
+/// to specify this manually, just return a value from your `setup` function and it will
+/// be available to read and write in your callbacks.
+///
+/// You only really need to use the `State` parameter if you want to save and load state,
+/// if you don't care about this feature you can just use mutable variables in your `main`
+/// function that are then captured by your callbacks.
+///
+/// The documentation for this type only includes the available methods. To see the available
+/// fields, see the documentation for `InternalState`.
 #[derive(Serialize, Deserialize)]
 pub struct PollockState<State> {
+    /// The application-internal state.
     pub state: State,
     pub(crate) internal: InternalState,
 }
@@ -93,6 +145,8 @@ impl<S> DerefMut for PollockState<S> {
     }
 }
 
+/// The set of keys currently held on this frame. To query this, use
+/// `is_down` and `is_up`.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct KeySet {
     // We use `u16` instead of `Key` since `Key` doesn't implement
@@ -101,8 +155,20 @@ pub struct KeySet {
 }
 
 impl KeySet {
+    /// Query whether a given key is pressed. To choose a key,
+    /// use `Key::` and then the name of the key (see the documentation
+    /// for `Key`, which is a re-export of `VirtualKeyCode` from `glutin`)
+    #[inline]
     pub fn is_down(&self, key: Key) -> bool {
         self.keys.contains(&(key as u16))
+    }
+
+    /// Query whether a given key is released. To choose a key,
+    /// use `Key::` and then the name of the key (see the documentation
+    /// for `Key`, which is a re-export of `VirtualKeyCode` from `glutin`)
+    #[inline]
+    pub fn is_up(&self, key: Key) -> bool {
+        !self.is_down(key)
     }
 
     pub(crate) fn press(&mut self, key: Key) {
@@ -114,15 +180,42 @@ impl KeySet {
     }
 }
 
+/// All of the state used internally by Pollock. When you draw
+/// a rectangle or so forth, this is where the fill color and
+/// the stroke is read from. To see functions that you can
+/// use to interact with Pollock, see the functions defined on
+/// `PollockState`.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct InternalState {
+    /// Whether or not the application is paused. This is akin
+    /// to `noLoop` in Processing. Key handlers will still be
+    /// called when the application is paused, so you can use
+    /// this to pause and unpause.
     pub paused: bool,
+    /// The stroke used to draw outlines of shapes and lines.
     pub stroke: Stroke,
+    /// The color to fill shapes with.
     pub fill: Fill,
-    pub background: Color,
+    /// The background fill. This will be drawn automatically
+    /// to the screen, you don't have to call `clear()`. If
+    /// you want to have draws persist (like the default
+    /// behaviour in Processing) use `Fill::none()`.
+    pub background: Fill,
+    /// The current frame number that we are on. This is
+    /// incremented automatically each frame and is intended
+    /// to be read-only. You can set it if you like, but it
+    /// might make your program act weirdly.
     pub frame_count: usize,
+    /// The window size. If you set this, the screen size will
+    /// update automatically.
     pub size: (u32, u32),
+    /// The keys that are currently held down. See the
+    /// documentation for `KeySet` to see how to query this.
     pub keys: KeySet,
+    /// The current screen transformation. You probably will
+    /// never need to access this directly - the `translate`,
+    /// `rotate` and `scale` methods on `PollockState` should
+    /// be enough.
     pub transform: Transform,
     pub(crate) save_frame: Option<PathBuf>,
     pub(crate) record_folder: Option<PathBuf>,
@@ -139,7 +232,7 @@ impl InternalState {
             stroke: Default::default(),
             fill: Default::default(),
             random: <_>::from_entropy(),
-            background: Color::new(0, 0, 0, 0),
+            background: Fill::none(),
             frame_count: 0,
             keys: Default::default(),
             transform: Transform::identity(),
